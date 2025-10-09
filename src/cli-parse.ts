@@ -4,8 +4,15 @@ import { parse, CFG } from './parser.js';
 
 const path = process.argv[2];
 if (!path) {
-  console.error('Usage: pnpm parse <file>'); process.exit(1);
+  console.error('Usage: pnpm parse <file>');
+  process.exit(1);
 }
+
+if (!path.endsWith('.ellipsis')) {
+  console.error('Error: O arquivo deve ter a extensão .ellipsis');
+  process.exit(1);
+}
+
 const src = fs.readFileSync(path, 'utf-8');
 try {
   const { tokens, ast } = parse(src);
@@ -17,7 +24,7 @@ try {
   console.log();
   console.log('=== AST (RESUMO) ===');
   console.log(JSON.stringify(ast, null, 2));
-} catch (e:any) {
+} catch (e: any) {
   console.error('Erro de análise sintática:', e.message);
   process.exit(2);
 }

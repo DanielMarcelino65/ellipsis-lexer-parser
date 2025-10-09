@@ -1,0 +1,28 @@
+// examples/demo.acai
+recipe soma(a, b) {
+  put s = a + b;
+  return s;
+}
+
+recipe main() {
+  put x = 1;
+  put y = 2;
+  if (x < y) {
+    x = soma(x, y);
+  } else {
+    x = 0;
+  }
+
+  put i = 0;
+  meanwhile (i < 3) {
+    i = i + 1;
+  }
+
+  do {
+    x = x - 1;
+  } meanwhile (x > 0);
+
+  for (put j = 0; j < 2; j = j + 1) {
+    x = x + j;
+  }
+}
