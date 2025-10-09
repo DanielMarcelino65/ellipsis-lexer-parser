@@ -1,8 +1,6 @@
-# Acai Lexer + Parser (Subset)
+# Ellipsis Lexer + Parser
 
-Projeto minimalista focado **apenas** na parte de **Análise Léxica e Sintática**,
-pronto para apresentar na disciplina de Compiladores. Foi reduzido para não incluir
-interpretador/compilador completo — somente **lexer** e **parser** integrados.
+Projeto minimalista focado **apenas** na parte de **Análise Léxica e Sintática**.
 
 ## Requisitos
 
@@ -20,7 +18,7 @@ pnpm install
 Gera tabela de lexemas/tokens, classes e cadeia de tokens:
 
 ```bash
-pnpm lex examples/demo.acai
+pnpm lex examples/demo.ellipsis
 ```
 
 Saída esperada:
@@ -35,7 +33,7 @@ Mostra a **gramática livre de contexto (subconjunto)**, confirma a integração
 (tokens -> parser) e imprime um **AST resumido**:
 
 ```bash
-pnpm parse examples/demo.acai
+pnpm parse examples/demo.ellipsis
 ```
 
 ## Demo completa
