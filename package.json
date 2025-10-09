@@ -1,0 +1,20 @@
+{
+  "name": "acai-lexer-parser",
+  "version": "1.0.0",
+  "description": "Lexer + Parser demonstrator.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "lex": "tsx src/cli-lex.ts",
+    "parse": "tsx src/cli-parse.ts",
+    "demo": "tsx src/cli-demo.ts",
+    "examples": "node -e \"console.log('Examples:'); require('fs').readdirSync('examples').forEach(f=>console.log(' - examples/'+f))\""
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@types/node": "^24.7.0"
+  }
+}
