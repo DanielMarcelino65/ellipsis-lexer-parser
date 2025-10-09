@@ -1,0 +1,10 @@
+{
+  "iconDefinitions": {
+    "ellipsisFile": {
+      "iconPath": "./icons/ellipsis.svg"
+    }
+  },
+  "fileExtensions": {
+    "ellipsis": "ellipsisFile"
+  }
+}

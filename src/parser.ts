@@ -30,6 +30,16 @@ export type Expr =
   | { kind: 'Call'; callee: Expr; args: Expr[] }
   | { kind: 'Assignment'; id: string; value: Expr };
 
+// === Util: mensagens de erro consistentes ===
+function fmtWhere(t: Token) {
+  return `${t.line}:${t.column}`;
+}
+function syntaxError(t: Token, message: string, expected?: string[]): never {
+  const exp =
+    expected && expected.length ? ` Expected: ${expected.join(' | ')}.` : '';
+  throw new Error(`Syntax error at ${fmtWhere(t)}: ${message}.${exp}`);
+}
+
 class Parser {
   private tokens: Token[];
   private i = 0;
@@ -51,38 +61,89 @@ class Parser {
   private expect(type: Token['type'], lexeme?: string): Token {
     const t = this.peek();
     if (t.type !== type)
-      throw new Error(
-        `Expected ${type} but found ${t.type} ('${t.lexeme}') at ${t.line}:${t.column}`
-      );
-    if (lexeme !== undefined && t.lexeme !== lexeme) {
-      throw new Error(
-        `Expected '${lexeme}' but found '${t.lexeme}' at ${t.line}:${t.column}`
-      );
-    }
+      syntaxError(t, `found ${t.type} '${t.lexeme}'`, [lexeme ?? type]);
+    if (lexeme !== undefined && t.lexeme !== lexeme)
+      syntaxError(t, `found '${t.lexeme}'`, [lexeme]);
     return this.advance();
+  }
+
+  // FIRST sets para validação rápida
+  private firstOfExpression(t: Token): boolean {
+    if (t.type === 'Number' || t.type === 'String') return true;
+    if (t.type === 'Identifier') return true;
+    if (t.type === 'Punctuation' && t.lexeme === '(') return true;
+    if (
+      t.type === 'Operator' &&
+      (t.lexeme === '!' || t.lexeme === '+' || t.lexeme === '-')
+    )
+      return true;
+    if (
+      t.type === 'Keyword' &&
+      (t.lexeme === 'true' || t.lexeme === 'false' || t.lexeme === 'empty')
+    )
+      return true;
+    return false;
+  }
+
+  private firstOfStatement(t: Token): boolean {
+    if (
+      t.type === 'Keyword' &&
+      (t.lexeme === 'put' ||
+        t.lexeme === 'take' ||
+        t.lexeme === 'recipe' ||
+        t.lexeme === 'if' ||
+        t.lexeme === 'else' ||
+        t.lexeme === 'meanwhile' ||
+        t.lexeme === 'do' ||
+        t.lexeme === 'for' ||
+        t.lexeme === 'return')
+    )
+      return true;
+    if (t.type === 'Punctuation' && t.lexeme === '{') return true;
+    // ExprStmt começa como Expression
+    return this.firstOfExpression(t);
   }
 
   public parseProgram(): Program {
     const body: Stmt[] = [];
     while (!this.atEnd()) {
+      const t0 = this.peek();
+      if (!this.firstOfStatement(t0)) {
+        syntaxError(t0, `invalid start of statement '${t0.lexeme}'`, [
+          'put',
+          'take',
+          'recipe',
+          'if',
+          'meanwhile',
+          'do',
+          'for',
+          'return',
+          '{',
+          '<expression>',
+        ]);
+      }
       body.push(this.parseStatement());
     }
     return { kind: 'Program', body };
   }
+
+  // Palavras antigas: erro SINTÁTICO se usadas como começo de statement
+  private static LEGACY_DECL_IDENTIFIERS = new Set(['let', 'const', 'var']);
 
   private parseStatement(): Stmt {
     const t = this.peek();
 
     if (t.type === 'Keyword') {
       switch (t.lexeme) {
-        case 'put': // let
-        case 'take': // const
-          return this.parseVarDecl();
-        case 'recipe': // function
+        case 'put':
+          return this.parseVarDecl(true); // let
+        case 'take':
+          return this.parseVarDecl(true); // const
+        case 'recipe':
           return this.parseRecipeDecl();
         case 'if':
           return this.parseIf();
-        case 'meanwhile': // while
+        case 'meanwhile':
           return this.parseWhile();
         case 'do':
           return this.parseDoWhile();
@@ -97,54 +158,94 @@ class Parser {
       return this.parseBlock();
     }
 
-    // default: expression statement
+    // Erro sintático explícito para 'let'/'const'/'var' iniciando statement
+    if (
+      t.type === 'Identifier' &&
+      Parser.LEGACY_DECL_IDENTIFIERS.has(t.lexeme)
+    ) {
+      syntaxError(
+        t,
+        `'${t.lexeme}' is not a declaration keyword in this language`,
+        ['put', 'take']
+      );
+    }
+
+    // Expression statement (validamos FIRST(Expression))
+    if (!this.firstOfExpression(t)) {
+      syntaxError(t, `invalid start of expression '${t.lexeme}'`, [
+        '(',
+        'Identifier',
+        'Number',
+        'String',
+        '!',
+        '+',
+        '-',
+        'true',
+        'false',
+        'empty',
+      ]);
+    }
     const expr = this.parseExpression();
-    if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';')
+    if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';') {
       this.advance();
+    } else {
+      syntaxError(this.peek(), `missing ';' after expression statement`, [';']);
+    }
     return { kind: 'ExprStmt', expr };
   }
 
   private parseBlock(): Stmt {
-    this.expect('Punctuation', '{');
+    const open = this.expect('Punctuation', '{');
     const body: Stmt[] = [];
     while (
+      !this.atEnd() &&
       !(this.peek().type === 'Punctuation' && this.peek().lexeme === '}')
     ) {
       body.push(this.parseStatement());
     }
+    if (this.atEnd())
+      syntaxError(open, `unterminated block: missing '}'`, ['}']);
     this.expect('Punctuation', '}');
     return { kind: 'Block', body };
   }
 
-  // === DECLARAÇÃO DE VARIÁVEL: SOMENTE 'put' (let) OU 'take' (const) ===
-  private parseVarDecl(): Stmt {
-    const kw = this.peek(); // deve ser 'put' ou 'take'
+  // DECLARAÇÃO DE VARIÁVEL: SOMENTE 'put' (let) OU 'take' (const)
+  private parseVarDecl(needsSemicolon: boolean): Stmt {
+    const kw = this.peek();
     if (
       !(kw.type === 'Keyword' && (kw.lexeme === 'put' || kw.lexeme === 'take'))
     ) {
-      throw new Error(`Expected 'put' or 'take' at ${kw.line}:${kw.column}`);
+      syntaxError(kw, `expected 'put' or 'take'`, ['put', 'take']);
     }
     const kindKw = kw.lexeme as 'put' | 'take';
-    this.advance(); // consome 'put' ou 'take'
+    this.advance();
 
-    const id = this.expect('Identifier').lexeme;
-    let init: Expr | undefined = undefined;
+    const idTok = this.expect('Identifier');
+    const id = idTok.lexeme;
 
-    // opcional "= expr"
+    let init: Expr | undefined;
     if (this.peek().type === 'Operator' && this.peek().lexeme === '=') {
       this.advance();
       init = this.parseExpression();
     }
 
-    if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';')
-      this.advance();
+    if (needsSemicolon) {
+      // ; obrigatório fora do for
+      if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';') {
+        this.advance();
+      } else {
+        syntaxError(this.peek(), `missing ';' after variable declaration`, [
+          ';',
+        ]);
+      }
+    }
 
     return { kind: 'VarDecl', id, init, kindKw };
   }
 
   private parseRecipeDecl(): Stmt {
-    this.expect('Keyword', 'recipe');
-    const name = this.expect('Identifier').lexeme;
+    const k = this.expect('Keyword', 'recipe');
+    const nameTok = this.expect('Identifier');
     this.expect('Punctuation', '(');
     const params: string[] = [];
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ')')) {
@@ -158,7 +259,7 @@ class Parser {
     }
     this.expect('Punctuation', ')');
     const body = (this.parseBlock() as any).body as Stmt[];
-    return { kind: 'FunctionDecl', name, params, body };
+    return { kind: 'FunctionDecl', name: nameTok.lexeme, params, body };
   }
 
   private parseIf(): Stmt {
@@ -169,7 +270,7 @@ class Parser {
     const consequent = this.parseStatement() as any;
     const consBody =
       consequent.kind === 'Block' ? consequent.body : [consequent];
-    let alternate: Stmt[] | undefined = undefined;
+    let alternate: Stmt[] | undefined;
     if (this.peek().type === 'Keyword' && this.peek().lexeme === 'else') {
       this.advance();
       const alt = this.parseStatement() as any;
@@ -179,7 +280,7 @@ class Parser {
   }
 
   private parseWhile(): Stmt {
-    this.expect('Keyword', 'meanwhile'); // dialeto: 'meanwhile' em vez de 'while'
+    this.expect('Keyword', 'meanwhile'); // while
     this.expect('Punctuation', '(');
     const test = this.parseExpression();
     this.expect('Punctuation', ')');
@@ -192,7 +293,7 @@ class Parser {
     this.expect('Keyword', 'do');
     const bodyStmt = this.parseStatement() as any;
     const body = bodyStmt.kind === 'Block' ? bodyStmt.body : [bodyStmt];
-    this.expect('Keyword', 'meanwhile'); // 'do ... meanwhile (...) ;'
+    this.expect('Keyword', 'meanwhile'); // do ... meanwhile (...)
     this.expect('Punctuation', '(');
     const test = this.parseExpression();
     this.expect('Punctuation', ')');
@@ -208,16 +309,45 @@ class Parser {
     // init
     let init: Stmt | null = null;
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ';')) {
-      // Only declare variable if 'put' or 'take'
       if (
         this.peek().type === 'Keyword' &&
         (this.peek().lexeme === 'put' || this.peek().lexeme === 'take')
       ) {
-        init = this.parseVarDecl();
+        init = this.parseVarDecl(false);
       } else {
+        // erro sintático explícito se começar com let/const/var aqui
+        if (
+          this.peek().type === 'Identifier' &&
+          Parser.LEGACY_DECL_IDENTIFIERS.has(this.peek().lexeme)
+        ) {
+          const t0 = this.peek();
+          syntaxError(
+            t0,
+            `'${t0.lexeme}' is not a declaration keyword in this language`,
+            ['put', 'take']
+          );
+        }
+        // expressão normal
+        if (!this.firstOfExpression(this.peek())) {
+          syntaxError(this.peek(), `invalid start of expression in for-init`, [
+            'put',
+            'take',
+            '(',
+            'Identifier',
+            'Number',
+            'String',
+            '!',
+            '+',
+            '-',
+            'true',
+            'false',
+            'empty',
+          ]);
+        }
         const e = this.parseExpression();
         if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';')
           this.advance();
+        else syntaxError(this.peek(), `missing ';' after for-init`, [';']);
         init = { kind: 'ExprStmt', expr: e };
       }
     } else {
@@ -245,7 +375,7 @@ class Parser {
 
   private parseReturn(): Stmt {
     this.expect('Keyword', 'return');
-    let argument: Expr | undefined = undefined;
+    let argument: Expr | undefined;
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ';')) {
       argument = this.parseExpression();
     }
@@ -254,7 +384,7 @@ class Parser {
     return { kind: 'Return', argument };
   }
 
-  // Expressions with precedence (||, &&, equality, relational, additive, multiplicative, unary, primary)
+  // === EXPRESSÕES com precedência ===
   private parseExpression(): Expr {
     return this.parseAssignment();
   }
@@ -264,9 +394,12 @@ class Parser {
     if (this.peek().type === 'Operator' && this.peek().lexeme === '=') {
       this.advance();
       if (expr.kind !== 'Identifier')
-        throw new Error('Left side of assignment must be an identifier');
+        syntaxError(
+          this.peek(),
+          'left side of assignment must be an identifier'
+        );
       const value = this.parseAssignment();
-      return { kind: 'Assignment', id: expr.name, value };
+      return { kind: 'Assignment', id: (expr as any).name, value };
     }
     return expr;
   }
@@ -382,13 +515,12 @@ class Parser {
       this.advance();
       return {
         kind: 'Literal',
-        value: t.lexeme === 'true' ? true : t.lexeme === 'false' ? false : null, // 'empty' -> null
+        value: t.lexeme === 'true' ? true : t.lexeme === 'false' ? false : null,
       };
     }
     if (t.type === 'Identifier') {
       this.advance();
       let expr: Expr = { kind: 'Identifier', name: t.lexeme };
-      // call
       if (this.peek().type === 'Punctuation' && this.peek().lexeme === '(') {
         this.advance();
         const args: Expr[] = [];
@@ -416,9 +548,18 @@ class Parser {
       this.expect('Punctuation', ')');
       return e;
     }
-    throw new Error(
-      `Unexpected token ${t.type} '${t.lexeme}' at ${t.line}:${t.column}`
-    );
+    syntaxError(t, `unexpected token ${t.type} '${t.lexeme}'`, [
+      'Number',
+      'String',
+      'Identifier',
+      '(',
+      'true',
+      'false',
+      'empty',
+      '!',
+      '+',
+      '-',
+    ]);
   }
 }
 
