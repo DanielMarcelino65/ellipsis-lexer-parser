@@ -6,7 +6,7 @@ export type AST = Program | Stmt | Expr;
 export type Program = { kind: 'Program'; body: Stmt[] };
 
 export type Stmt =
-  | { kind: 'VarDecl'; id: string; init?: Expr }
+  | { kind: 'VarDecl'; id: string; init?: Expr; kindKw: 'put' | 'take' }
   | { kind: 'FunctionDecl'; name: string; params: string[]; body: Stmt[] }
   | { kind: 'If'; test: Expr; consequent: Stmt[]; alternate?: Stmt[] }
   | { kind: 'While'; test: Expr; body: Stmt[] }
@@ -72,16 +72,17 @@ class Parser {
 
   private parseStatement(): Stmt {
     const t = this.peek();
+
     if (t.type === 'Keyword') {
       switch (t.lexeme) {
-        case 'put':
-        case 'take':
+        case 'put': // let
+        case 'take': // const
           return this.parseVarDecl();
-        case 'recipe':
+        case 'recipe': // function
           return this.parseRecipeDecl();
         case 'if':
           return this.parseIf();
-        case 'meanwhile':
+        case 'meanwhile': // while
           return this.parseWhile();
         case 'do':
           return this.parseDoWhile();
@@ -91,12 +92,13 @@ class Parser {
           return this.parseReturn();
       }
     }
+
     if (t.type === 'Punctuation' && t.lexeme === '{') {
       return this.parseBlock();
     }
+
     // default: expression statement
     const expr = this.parseExpression();
-    // optional semicolon
     if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';')
       this.advance();
     return { kind: 'ExprStmt', expr };
@@ -114,6 +116,7 @@ class Parser {
     return { kind: 'Block', body };
   }
 
+  // === DECLARAÇÃO DE VARIÁVEL: SOMENTE 'put' (let) OU 'take' (const) ===
   private parseVarDecl(): Stmt {
     const kw = this.peek(); // deve ser 'put' ou 'take'
     if (
@@ -121,6 +124,7 @@ class Parser {
     ) {
       throw new Error(`Expected 'put' or 'take' at ${kw.line}:${kw.column}`);
     }
+    const kindKw = kw.lexeme as 'put' | 'take';
     this.advance(); // consome 'put' ou 'take'
 
     const id = this.expect('Identifier').lexeme;
@@ -131,9 +135,11 @@ class Parser {
       this.advance();
       init = this.parseExpression();
     }
+
     if (this.peek().type === 'Punctuation' && this.peek().lexeme === ';')
       this.advance();
-    return { kind: 'VarDecl', id, init };
+
+    return { kind: 'VarDecl', id, init, kindKw };
   }
 
   private parseRecipeDecl(): Stmt {
@@ -173,7 +179,7 @@ class Parser {
   }
 
   private parseWhile(): Stmt {
-    this.expect('Keyword', 'while');
+    this.expect('Keyword', 'meanwhile'); // dialeto: 'meanwhile' em vez de 'while'
     this.expect('Punctuation', '(');
     const test = this.parseExpression();
     this.expect('Punctuation', ')');
@@ -186,7 +192,7 @@ class Parser {
     this.expect('Keyword', 'do');
     const bodyStmt = this.parseStatement() as any;
     const body = bodyStmt.kind === 'Block' ? bodyStmt.body : [bodyStmt];
-    this.expect('Keyword', 'while');
+    this.expect('Keyword', 'meanwhile'); // 'do ... meanwhile (...) ;'
     this.expect('Punctuation', '(');
     const test = this.parseExpression();
     this.expect('Punctuation', ')');
@@ -198,14 +204,14 @@ class Parser {
   private parseFor(): Stmt {
     this.expect('Keyword', 'for');
     this.expect('Punctuation', '(');
+
     // init
     let init: Stmt | null = null;
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ';')) {
+      // Only declare variable if 'put' or 'take'
       if (
         this.peek().type === 'Keyword' &&
-        (this.peek().lexeme === 'var' ||
-          this.peek().lexeme === 'let' ||
-          this.peek().lexeme === 'const')
+        (this.peek().lexeme === 'put' || this.peek().lexeme === 'take')
       ) {
         init = this.parseVarDecl();
       } else {
@@ -217,18 +223,21 @@ class Parser {
     } else {
       this.expect('Punctuation', ';');
     }
+
     // test
     let test: Expr | null = null;
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ';')) {
       test = this.parseExpression();
     }
     this.expect('Punctuation', ';');
+
     // update
     let update: Expr | null = null;
     if (!(this.peek().type === 'Punctuation' && this.peek().lexeme === ')')) {
       update = this.parseExpression();
     }
     this.expect('Punctuation', ')');
+
     const bodyStmt = this.parseStatement() as any;
     const body = bodyStmt.kind === 'Block' ? bodyStmt.body : [bodyStmt];
     return { kind: 'For', init, test, update, body };
@@ -368,12 +377,12 @@ class Parser {
     }
     if (
       t.type === 'Keyword' &&
-      (t.lexeme === 'true' || t.lexeme === 'false' || t.lexeme === 'null')
+      (t.lexeme === 'true' || t.lexeme === 'false' || t.lexeme === 'empty')
     ) {
       this.advance();
       return {
         kind: 'Literal',
-        value: t.lexeme === 'true' ? true : t.lexeme === 'false' ? false : null,
+        value: t.lexeme === 'true' ? true : t.lexeme === 'false' ? false : null, // 'empty' -> null
       };
     }
     if (t.type === 'Identifier') {
@@ -424,12 +433,12 @@ export function parse(source: string) {
 export const CFG = `
 Program       -> Statement* EOF
 Statement     -> VarDecl | RecipeDecl | If | While | DoWhile | For | Return | Block | ExprStmt
-VarDecl       -> ('var'|'let'|'const') Identifier ('=' Expression)? ';'?
+VarDecl       -> ('put'|'take') Identifier ('=' Expression)? ';'?
 RecipeDecl    -> 'recipe' Identifier '(' ParamList? ')' Block
 ParamList     -> Identifier (',' Identifier)*
 If            -> 'if' '(' Expression ')' Statement ('else' Statement)?
-While         -> 'while' '(' Expression ')' Statement
-DoWhile       -> 'do' Statement 'while' '(' Expression ')' ';'?
+While         -> 'meanwhile' '(' Expression ')' Statement
+DoWhile       -> 'do' Statement 'meanwhile' '(' Expression ')' ';'?
 For           -> 'for' '(' (VarDecl|Expression)? ';' Expression? ';' Expression? ')' Statement
 Return        -> 'return' Expression? ';'?
 Block         -> '{' Statement* '}'
@@ -444,6 +453,6 @@ Relational    -> Additive (('<'|'>'|'<='|'>=') Additive)*
 Additive      -> Multiplicative (('+'|'-') Multiplicative)*
 Multiplicative-> Unary (('*'|'/'|'%') Unary)*
 Unary         -> ('!'|'-'|'+') Unary | Primary
-Primary       -> Number | String | 'true' | 'false' | 'null' | Identifier CallArgs? | '(' Expression ')'
+Primary       -> Number | String | 'true' | 'false' | 'empty' | Identifier CallArgs? | '(' Expression ')'
 CallArgs      -> '(' (Expression (',' Expression)*)? ')'
 `;
