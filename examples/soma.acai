@@ -1,0 +1,4 @@
+function soma(a, b) {
+  put s = a + b;
+  return s;
+}

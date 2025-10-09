@@ -31,8 +31,17 @@ export const KEYWORDS = new Set([
   'empty', //null
 ]);
 
-// Regex for identifiers (explicit for presentation):
-// ^[A-Za-z_][A-Za-z0-9_]*$
+export const LEGACY_TO_DIALECT = new Map<string, string>([
+  ['let', 'put'],
+  ['const', 'take'],
+  ['function', 'recipe'],
+  ['while', 'meanwhile'],
+  ['null', 'empty'],
+  ['var', 'put'],
+]);
+
+export const FORBIDDEN_IDENTIFIERS = new Set(LEGACY_TO_DIALECT.keys());
+
 export const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const isWhitespace = (ch: string) => /\s/.test(ch);
@@ -182,6 +191,16 @@ export class Lexer {
     if (isIdentifierStart(ch)) {
       let id = this.advance();
       while (isIdentifierPart(this.peek())) id += this.advance();
+
+      if (FORBIDDEN_IDENTIFIERS.has(id)) {
+        const suggestion = LEGACY_TO_DIALECT.get(id);
+        const where = `${startLine}:${startCol}`;
+        const hint = suggestion ? ` Use '${suggestion}' instead.` : '';
+        throw new Error(
+          `Lexical error at ${where}: '${id}' is not valid in this language.${hint}`
+        );
+      }
+
       if (KEYWORDS.has(id)) {
         return this.makeToken('Keyword', id, startLine, startCol);
       }
