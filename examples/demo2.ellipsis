@@ -1,0 +1,15 @@
+recipe main() {
+  put x = 10;
+  put y;
+  y = x * 2 + 3;
+
+  if (y > 10) {
+    return;
+  } else {
+    meanwhile (x > 0) {
+      x = x - 1;
+    }
+  }
+
+  return;
+}

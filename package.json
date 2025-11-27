@@ -8,6 +8,7 @@
     "lex": "tsx src/cli-lex.ts",
     "parse": "tsx src/cli-parse.ts",
     "demo": "tsx src/cli-demo.ts",
+    "ll1": "tsx src/cli-LL1.ts",
     "examples": "node -e \"console.log('Examples:'); require('fs').readdirSync('examples').forEach(f=>console.log(' - examples/'+f))\""
   },
   "devDependencies": {
