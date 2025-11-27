@@ -17,7 +17,7 @@ function printUsage() {
   const prog = path.basename(process.argv[1] || 'll1-cli');
   console.log(`
 Uso:
-  pnpm tsx src/ll1-cli.ts <arquivo> [opções]
+  pnpm ll1 <arquivo> [opções]
 
 Opções:
   --tokens      Imprime a lista de tokens gerados pelo analisador léxico
