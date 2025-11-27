@@ -12,6 +12,7 @@ import {
 
 // Se quiser tipar tokens bonitinho:
 import type { Token } from './lexer.js';
+import type { LL1Step } from './LL1parser'; // <- exporta esse tipo lá
 
 function printUsage() {
   const prog = path.basename(process.argv[1] || 'll1-cli');
@@ -24,11 +25,13 @@ Opções:
   --first       Imprime os conjuntos FIRST da gramática
   --follow      Imprime os conjuntos FOLLOW da gramática
   --table       Imprime um resumo da Tabela LL(1)
+  --trace       Imprime o passo a passo da pilha (tabela de MATCH do LL(1))
   -h, --help    Mostra esta mensagem de ajuda
 
 Exemplos:
   pnpm ll1 exemplos/test.ellipsis --tokens --first --follow
   pnpm ll1 exemplos/test.ellipsis --table
+  pnpm ll1 exemplos/test.ellipsis --trace
 `);
 }
 
@@ -43,6 +46,7 @@ function parseArgs() {
       showFirst: false,
       showFollow: false,
       showTable: false,
+      showTrace: false,
     };
   }
 
@@ -53,6 +57,7 @@ function parseArgs() {
   const showFirst = args.includes('--first');
   const showFollow = args.includes('--follow');
   const showTable = args.includes('--table');
+  const showTrace = args.includes('--trace');
 
   return {
     showHelp: false,
@@ -61,6 +66,7 @@ function parseArgs() {
     showFirst,
     showFollow,
     showTable,
+    showTrace,
   };
 }
 
@@ -74,9 +80,52 @@ function printTokens(tokens: Token[]) {
   console.log();
 }
 
+// impressão do passo a passo do LL(1)
+function printTrace(trace: LL1Step[]) {
+  if (!trace || trace.length === 0) {
+    console.log('\n===== TRAÇO LL(1) =====');
+    console.log('(nenhum passo registrado)');
+    return;
+  }
+
+  console.log('\n===== TRAÇO LL(1) (tabela de MATCH) =====');
+  console.log(
+    'passo | pilha (fundo -> topo)                | lookahead        | ação        | produção'
+  );
+  console.log(
+    '------+--------------------------------------+------------------+-------------+--------------------------------'
+  );
+
+  for (const s of trace) {
+    const stackStr = `[${s.stack.join(' ')}]`;
+    const look = `${s.lookahead.type}:${s.lookahead.lexeme}`
+      .slice(0, 16)
+      .padEnd(16, ' ');
+    const actionLabel = s.action.padEnd(11, ' ');
+    const prodStr = s.production
+      ? `${s.production.head} -> ${s.production.body.join(' ')}`
+      : '';
+
+    console.log(
+      `${String(s.step).padEnd(5, ' ')} | ${stackStr.padEnd(
+        38,
+        ' '
+      )} | ${look} | ${actionLabel} | ${prodStr}`
+    );
+  }
+  console.log();
+}
+
 function main() {
-  const { showHelp, filePath, showTokens, showFirst, showFollow, showTable } =
-    parseArgs();
+  const {
+    showHelp,
+    filePath,
+    showTokens,
+    showFirst,
+    showFollow,
+    showTable,
+    showTrace,
+  } = parseArgs();
 
   if (showHelp || !filePath) {
     printUsage();
@@ -91,7 +140,10 @@ function main() {
   const source = fs.readFileSync(filePath, 'utf8');
 
   try {
-    const { tokens, first, follow, table } = runLL1(source);
+    // agora runLL1 aceita opção { trace }
+    const { tokens, first, follow, table, trace } = runLL1(source, {
+      trace: showTrace,
+    });
 
     console.log(`Arquivo: ${filePath}`);
     console.log('Resultado: Programa aceito pelo analisador LL(1).');
@@ -108,6 +160,9 @@ function main() {
     }
     if (showTable) {
       printParseTable(table);
+    }
+    if (showTrace) {
+      printTrace(trace);
     }
   } catch (err) {
     console.error('Erro durante análise LL(1):');

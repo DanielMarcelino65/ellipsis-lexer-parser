@@ -1,4 +1,3 @@
-// src/ll1Parser.ts
 import { Lexer, Token } from './lexer.js';
 
 // ========================
@@ -6,6 +5,17 @@ import { Lexer, Token } from './lexer.js';
 // ========================
 
 const EPSILON = 'ε';
+
+export type LL1ActionType = 'match' | 'expand' | 'epsilon' | 'accept';
+
+export interface LL1Step {
+  step: number;
+  stack: SymbolName[];
+  lookahead: Token;
+  action: LL1ActionType;
+  X: SymbolName;
+  production?: Production;
+}
 
 type NonTerminal = string;
 type Terminal = string;
@@ -60,6 +70,7 @@ interface Production {
 // ArgList      -> Expr ArgListTail
 // ArgListTail  -> COMMA Expr ArgListTail | ε
 //
+
 // Terminais são nomes abstratos, mapeados a partir dos tokens do Lexer.
 
 export const NON_TERMINALS: NonTerminal[] = [
@@ -354,7 +365,7 @@ export const PRODUCTIONS: Production[] = [
 ];
 
 // ========================
-// Helpers de erro (compatíveis com Parser.ts)
+// Helpers de erro
 // ========================
 
 function fmtWhere(t: Token) {
@@ -375,7 +386,7 @@ type FollowSet = Map<NonTerminal, Set<Terminal>>;
 function computeFirstSets(): FirstSet {
   const first: FirstSet = new Map();
 
-  // FIRST de terminais
+  // FIRST de terminais (incluindo '$')
   for (const t of TERMINALS) {
     first.set(t, new Set([t]));
   }
@@ -403,6 +414,7 @@ function computeFirstSets(): FirstSet {
         // adiciona FIRST(symbol) \ {ε} em FIRST(head)
         for (const tok of firstSymbol) {
           if (tok === EPSILON) continue;
+          if (tok === '$') continue;
           if (!firstHead.has(tok)) {
             firstHead.add(tok);
             changed = true;
@@ -504,7 +516,6 @@ function buildParseTable(first: FirstSet, follow: FollowSet): ParseTable {
   for (const prod of PRODUCTIONS) {
     const { head, body } = prod;
 
-    // SE o head NÃO está em NON_TERMINALS, loga e ignora (pra não dar TypeError)
     if (!NON_TERMINALS.includes(head)) {
       console.error(
         `ATENÇÃO: produção com head '${head}' não está em NON_TERMINALS, ignorando:`,
@@ -534,10 +545,11 @@ function buildParseTable(first: FirstSet, follow: FollowSet): ParseTable {
     // Para cada a em FIRST(α) \ {ε}, M[head, a] = prod
     for (const tok of firstBody) {
       if (tok === EPSILON) continue;
+      if (tok === '$') continue;
       if (!row.has(tok as Terminal)) {
         row.set(tok as Terminal, prod);
       } else {
-        // conflito LL(1) (podemos silenciar)
+        // conflito LL(1)
         // console.warn('Conflito LL(1) em', head, tok, row.get(tok), 'x', prod);
       }
     }
@@ -665,10 +677,14 @@ class LL1Parser {
   private tokens: Token[];
   private index = 0;
   private table: ParseTable;
+  private traceEnabled: boolean;
+  private trace: LL1Step[] = [];
+  private stepCounter = 1;
 
-  constructor(tokens: Token[], table: ParseTable) {
+  constructor(tokens: Token[], table: ParseTable, opts?: { trace?: boolean }) {
     this.tokens = tokens;
     this.table = table;
+    this.traceEnabled = !!opts?.trace;
   }
 
   private currentToken(): Token {
@@ -677,6 +693,15 @@ class LL1Parser {
 
   private advance(): void {
     if (this.index < this.tokens.length) this.index++;
+  }
+
+  private recordStep(data: Omit<LL1Step, 'step'>) {
+    if (!this.traceEnabled) return;
+    this.trace.push({ step: this.stepCounter++, ...data });
+  }
+
+  public getTrace(): LL1Step[] {
+    return this.trace;
   }
 
   public parse(start: NonTerminal = START_SYMBOL): void {
@@ -688,13 +713,29 @@ class LL1Parser {
       const X = stack.pop()!;
       const aTerminal = tokenToTerminal(lookahead);
 
+      // snapshot da pilha no começo do passo (antes da ação)
+      const snapshotStack = [...stack, X];
+
       // Caso 1: X é terminal
       if (TERMINALS.includes(X as Terminal)) {
         if (X === aTerminal) {
           // MATCH
+          this.recordStep({
+            stack: snapshotStack,
+            lookahead,
+            action: 'match',
+            X,
+          });
+
           this.advance();
           lookahead = this.currentToken();
         } else {
+          this.recordStep({
+            stack: snapshotStack,
+            lookahead,
+            action: 'match', // tentativa de match que falha
+            X,
+          });
           syntaxError(
             lookahead,
             `esperado terminal '${X}' no topo da pilha, encontrado '${aTerminal}'`
@@ -703,12 +744,24 @@ class LL1Parser {
       }
       // Caso 2: X é ε
       else if (X === EPSILON) {
+        this.recordStep({
+          stack: snapshotStack,
+          lookahead,
+          action: 'epsilon',
+          X,
+        });
         continue;
       }
       // Caso 3: X é não-terminal
       else {
         const row = this.table.get(X);
         if (!row) {
+          this.recordStep({
+            stack: snapshotStack,
+            lookahead,
+            action: 'expand',
+            X,
+          });
           syntaxError(
             lookahead,
             `não existe linha na tabela para não-terminal '${X}'`
@@ -716,11 +769,26 @@ class LL1Parser {
         }
         const prod = row.get(aTerminal);
         if (!prod) {
+          this.recordStep({
+            stack: snapshotStack,
+            lookahead,
+            action: 'expand',
+            X,
+          });
           syntaxError(
             lookahead,
             `não existe produção LL(1) para par (${X}, ${aTerminal})`
           );
         }
+
+        // Registramos a escolha da produção
+        this.recordStep({
+          stack: snapshotStack,
+          lookahead,
+          action: 'expand',
+          X,
+          production: prod,
+        });
 
         // Empilha corpo da produção em ordem reversa
         for (let i = prod.body.length - 1; i >= 0; i--) {
@@ -733,15 +801,28 @@ class LL1Parser {
     // Depois que a pilha esvaziar, a entrada deve estar em EOF
     const finalTerm = tokenToTerminal(lookahead);
     if (finalTerm !== '$') {
+      this.recordStep({
+        stack: [],
+        lookahead,
+        action: 'accept', // tentativa de aceitar mas falha
+        X: '$' as SymbolName,
+      });
       syntaxError(
         lookahead,
         'entrada não foi completamente consumida pelo analisador LL(1)'
       );
     }
+
+    this.recordStep({
+      stack: [],
+      lookahead,
+      action: 'accept',
+      X: '$' as SymbolName,
+    });
   }
 }
 
-export function runLL1(source: string) {
+export function runLL1(source: string, opts?: { trace?: boolean }) {
   const lexer = new Lexer(source);
   const tokens = lexer.tokenize();
 
@@ -749,7 +830,7 @@ export function runLL1(source: string) {
   const follow = computeFollowSets(first);
   const table = buildParseTable(first, follow);
 
-  const parser = new LL1Parser(tokens, table);
+  const parser = new LL1Parser(tokens, table, { trace: opts?.trace });
   parser.parse(); // se não lançar erro, a entrada é aceita
 
   return {
@@ -757,6 +838,7 @@ export function runLL1(source: string) {
     first,
     follow,
     table,
+    trace: parser.getTrace(),
   };
 }
 
